@@ -13,6 +13,7 @@
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <geometry_msgs/TransformStamped.h>
+#include <sensor_msgs/Imu.h>
 #include "obstacle_detector/Obstacles.h"
 
 struct RobotState{
@@ -27,7 +28,7 @@ class Ekf{
     private:
         // ekf 
         void predict_diff(double v, double w);
-        void predict_ormi(double v, double w);
+        void predict_omni(double v_x, double v_y, double w);
         void update();
 
         // several util function
@@ -42,6 +43,7 @@ class Ekf{
         
         // for ros
         void odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg);
+        void imuCallback(const sensor_msgs::Imu::ConstPtr& imu_msg);
         void obstaclesCallback(const obstacle_detector::Obstacles::ConstPtr& obstacle_msg);
         void publishEkfPose(const ros::Time& stamp);
         void publishUpdateBeacon(const ros::Time& stamp);
@@ -69,14 +71,21 @@ class Ekf{
         RobotState robotstate_bar_;
         RobotState robotstate_;
         double p_odom_freq_;
+        double imu_w;
         double dt_;
 
         // ekf parameter
         // motion covariance
+        //diff
         double p_a1_;
         double p_a2_;
         double p_a3_;
         double p_a4_;
+        //omni
+        double p_const_x;
+        double p_const_y;
+        double p_const_theta;
+        Eigen::DiagonalMatrix<double, 3> P_omni_model_;
 
         // measure noise
         double p_Q1_;
@@ -98,6 +107,7 @@ class Ekf{
         // ros node
         ros::NodeHandle nh_;
         ros::Subscriber odom_sub_;
+        ros::Subscriber imu_sub_;
         ros::Subscriber raw_obstacles_sub_;
         ros::Publisher ekf_pose_pub_;
         tf2_ros::TransformBroadcaster br_;

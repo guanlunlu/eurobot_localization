@@ -1,5 +1,12 @@
 <launch>
+    <!-- map -->
+    <!-- <node name="map_odom" pkg="tf2_ros" type="static_transform_publisher" args="0 0 0 0 0 0 1 map odom"/> -->
+    <arg name="map_file" default="$(find stage_simulation)/maps/eurobot_map/empty_map.yaml"/>
+    <!-- Run the map server -->
+    <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)" />
+    
     <node name="ekf" pkg="eurobot_localization" type="ekf" output="screen">
         <rosparam file="$(find eurobot_localization)/config/ekf_stage.yaml"/>
     </node>
+    <node type="rviz" name="rviz" pkg="rviz" args="-d $(find eurobot_localization)/rviz/robot1_dit_test.rviz" />
 </launch>
