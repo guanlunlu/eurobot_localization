@@ -2,6 +2,7 @@
 #include <ros/console.h>
 #include <time.h>
 // tf2
+// #include <tf2>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/LinearMath/Transform.h>
@@ -29,7 +30,8 @@ class Ekf{
         // ekf 
         void predict_diff(double v, double w);
         void predict_omni(double v_x, double v_y, double w);
-        void update();
+        void update_landmark();
+        void update_gps();
 
         // several util function
         double euclideanDistance(Eigen::Vector2d a, Eigen::Vector3d b);
@@ -42,6 +44,7 @@ class Ekf{
         double degToRad(double deg){ return deg*M_PI/180.0 ;}
         
         // for ros
+        void setposeCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& pose_msg);
         void odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg);
         void imuCallback(const sensor_msgs::Imu::ConstPtr& imu_msg);
         void obstaclesCallback(const obstacle_detector::Obstacles::ConstPtr& obstacle_msg);
@@ -106,9 +109,14 @@ class Ekf{
         
         // ros node
         ros::NodeHandle nh_;
+        // initial pose
+        ros::Subscriber setpose_sub_;
+        // measurement data
         ros::Subscriber odom_sub_;
         ros::Subscriber imu_sub_;
         ros::Subscriber raw_obstacles_sub_;
+
+        // Publisher
         ros::Publisher ekf_pose_pub_;
         tf2_ros::TransformBroadcaster br_;
         // for debug

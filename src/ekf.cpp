@@ -1,7 +1,32 @@
+/**
+ *
+ * @file ekf.cpp
+ * @brief
+ *
+ * @code{.unparsed}
+ *      _____
+ *     /  /::\       ___           ___
+ *    /  /:/\:\     /  /\         /  /\
+ *   /  /:/  \:\   /  /:/        /  /:/
+ *  /__/:/ \__\:| /__/::\       /  /:/
+ *  \  \:\ /  /:/ \__\/\:\__   /  /::\
+ *   \  \:\  /:/     \  \:\/\ /__/:/\:\
+ *    \  \:\/:/       \__\::/ \__\/  \:\
+ *     \  \::/        /__/:/       \  \:\
+ *      \__\/         \__\/         \__\/
+ * @endcode
+ *
+ * @author guanlunlu (guanlunlu@gapp.nthu.edu.tw)
+ * @version 0.1
+ * @date 2022-03-05
+ *
+ */
+
 #include "eurobot_localization/ekf.h"
 using namespace std;
 
-void Ekf::initialize() {
+void Ekf::initialize()
+{
   // get parameter
   nh_.param<string>("/ekf/robot_name", p_robot_name_, "");
   nh_.param<double>("/ekf/initial_x", p_initial_x_, 0.4);
@@ -48,8 +73,7 @@ void Ekf::initialize() {
   nh_.param<double>("/ekf/predict_const_x", p_const_x, 2.0);
   nh_.param<double>("/ekf/predict_const_y", p_const_y, 2.0);
   nh_.param<double>("/ekf/predict_const_theta", p_const_theta, 0.3);
-  P_omni_model_ =
-      Eigen::Vector3d{p_const_x, p_const_y, p_const_theta}.asDiagonal();
+  P_omni_model_ = Eigen::Vector3d{p_const_x, p_const_y, p_const_theta}.asDiagonal();
   // measurement
   nh_.param<double>("/ekf/update_cov_1", p_Q1_, 0.01);
   nh_.param<double>("/ekf/update_cov_2", p_Q2_, 0.01);
@@ -57,36 +81,33 @@ void Ekf::initialize() {
   Q_ = Eigen::Vector3d{p_Q1_, p_Q2_, p_Q3_}.asDiagonal();
   // use log(j_k)
   nh_.param<double>("/ekf/mini_likelihood", p_mini_likelihood_, -10000.0);
-  nh_.param<double>("/ekf/mini_likelihood_update", p_mini_likelihood_update_,
-                    0.4);
+  nh_.param<double>("/ekf/mini_likelihood_update", p_mini_likelihood_update_, 0.4);
   // use j_k
   // mini_likelihood_ = 0.0;
   // mini_likelihood_update_ = 25.0;
 
   // for obstacle filtering
-  nh_.param<double>("/ekf/max_obstacle_distance", p_max_obstacle_distance_,
-                    0.5);
+  nh_.param<double>("/ekf/max_obstacle_distance", p_max_obstacle_distance_, 0.5);
 
   // for beacon piller detection
   if_new_obstacles_ = false;
   beacon_from_scan_ = {};
 
   // for ros
+  setpose_sub_ = nh_.subscribe("initialpose", 50, &Ekf::setposeCallback, this);
   odom_sub_ = nh_.subscribe("odom", 50, &Ekf::odomCallback, this);
   imu_sub_ = nh_.subscribe("imu", 50, &Ekf::imuCallback, this);
-  raw_obstacles_sub_ =
-      nh_.subscribe("raw_obstacles", 10, &Ekf::obstaclesCallback, this);
-  ekf_pose_pub_ =
-      nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("ekf_pose", 10);
-  update_beacon_pub_ =
-      nh_.advertise<obstacle_detector::Obstacles>("update_beacon", 10);
+  raw_obstacles_sub_ = nh_.subscribe("raw_obstacles", 10, &Ekf::obstaclesCallback, this);
+  ekf_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("ekf_pose", 10);
+  update_beacon_pub_ = nh_.advertise<obstacle_detector::Obstacles>("update_beacon", 10);
 
   // for time calculate
   count_ = 0;
   duration_ = 0.0;
 }
 
-void Ekf::predict_diff(double v, double w) {
+void Ekf::predict_diff(double v, double w)
+{
   double theta = robotstate_past_.mu(2);
   double s = sin(theta);
   double c = cos(theta);
@@ -99,13 +120,16 @@ void Ekf::predict_diff(double v, double w) {
   Eigen::Matrix<double, 3, 2> V;
   Eigen::Matrix2d M;
 
-  if ((w < 0.00001) && (w > -0.00001)) {
+  if ((w < 0.00001) && (w > -0.00001))
+  {
     G << 1.0, 0.0, -v * s * dt_, 0.0, 1.0, c * v * dt_, 0.0, 0.0, 1.0;
     V << c * dt_, 0.0, s * dt_, 0.0, 0.0, 0.0;
     robotstate_bar_.mu =
         robotstate_past_.mu + Eigen::Vector3d{v * c * dt_, v * s * dt_, 0.0};
     // cout << robotstate_bar_.mu << endl;
-  } else {
+  }
+  else
+  {
     G << 1.0, 0.0, (v * (-c + c_dt)) / w, 0.0, 1.0, (v * (-s + s_dt)) / w, 0.0,
         0.0, 1.0;
     V << (-s + s_dt) / w, v * (s - s_dt) / pow(w, 2) + v * dt_ * (c_dt) / w,
@@ -123,7 +147,8 @@ void Ekf::predict_diff(double v, double w) {
       G * robotstate_past_.sigma * G.transpose() + V * M * V.transpose();
 }
 
-void Ekf::predict_omni(double v_x, double v_y, double w) {
+void Ekf::predict_omni(double v_x, double v_y, double w)
+{
   // TODO ekf predict function for omni
   double d_x = v_x / p_odom_freq_;
   double d_y = v_y / p_odom_freq_;
@@ -177,32 +202,35 @@ void Ekf::predict_omni(double v_x, double v_y, double w) {
                           W * cov_motion * W.transpose();
 }
 
-void Ekf::update() {
+void Ekf::update_landmark()
+{
   // ekf update step:
-  if (if_new_obstacles_) {
+  if (if_new_obstacles_)
+  {
     // cout << "beacon: " << endl;
     // vector of the max j_max for each beacon
     vector<double> j_beacon_max = {p_mini_likelihood_, p_mini_likelihood_,
                                    p_mini_likelihood_};
+
     vector<Eigen::Vector3d> z_j_beacon_max = {Eigen::Vector3d(0.0, 0.0, 0.0),
                                               Eigen::Vector3d(0.0, 0.0, 0.0),
                                               Eigen::Vector3d(0.0, 0.0, 0.0)};
+
     vector<Eigen::Vector3d> z_i_beacon_max = {Eigen::Vector3d(0.0, 0.0, 0.0),
                                               Eigen::Vector3d(0.0, 0.0, 0.0),
                                               Eigen::Vector3d(0.0, 0.0, 0.0)};
     // cout << z_j_beacon_max[0] << z_j_beacon_max[1] << z_j_beacon_max[2] <<
     // endl;
-    Eigen::Matrix3d zero_mat =
-        Eigen::Matrix3d(Eigen::Vector3d{0.0, 0.0, 0.0}.asDiagonal());
+    Eigen::Matrix3d zero_mat = Eigen::Matrix3d(Eigen::Vector3d{0.0, 0.0, 0.0}.asDiagonal());
     vector<Eigen::Matrix3d> H_j_beacon_max = {zero_mat, zero_mat, zero_mat};
     vector<Eigen::Matrix3d> S_j_beacon_max = {zero_mat, zero_mat, zero_mat};
 
-    while (!beacon_from_scan_.empty()) { // for all scanned beacon
+    while (!beacon_from_scan_.empty())
+    { // for all scanned beacon
       Eigen::Vector2d landmark_scan = beacon_from_scan_.back();
       beacon_from_scan_.pop_back();
       // transfer landmark_scan type from (x, y) to (r, phi)
-      Eigen::Vector3d z_i =
-          cartesianToPolar(landmark_scan, Eigen::Vector3d(0, 0, 0));
+      Eigen::Vector3d z_i = cartesianToPolar(landmark_scan, Eigen::Vector3d(0, 0, 0));
       // cout << "z_i: " << z_i << endl;
       double j_max = p_mini_likelihood_;
       int k_max = 0;
@@ -213,34 +241,35 @@ void Ekf::update() {
 
       // cout << "beacon: " << endl;
 
-      for (Eigen::Vector2d landmark_k :
-           beacon_in_map_) { // for all beacon in map
+      for (Eigen::Vector2d landmark_k : beacon_in_map_)
+      { // for all beacon in map
         double j_k;
         Eigen::Vector3d z_k;
         Eigen::Matrix3d H_k;
         Eigen::Matrix3d S_k;
-        std::tie(z_k, H_k) =
-            cartesianToPolarWithH(landmark_k, robotstate_bar_.mu);
-        S_k =
-            H_k * robotstate_bar_.sigma * H_k.transpose() + Eigen::Matrix3d(Q_);
-        try {
+        std::tie(z_k, H_k) = cartesianToPolarWithH(landmark_k, robotstate_bar_.mu);
+        S_k = H_k * robotstate_bar_.sigma * H_k.transpose() + Eigen::Matrix3d(Q_);
+        try
+        {
           // original
           // j_k = 1/sqrt((2*M_PI*S_k).determinant()) *
           // exp(-0.5*(safeMinusTheta(z_i,
           // z_k)).transpose()*S_k.inverse()*(safeMinusTheta(z_i, z_k)));
           // ln(j_k()) version
-          j_k = -0.5 * safeMinusTheta(z_i, z_k).transpose() * S_k.inverse() *
-                    (safeMinusTheta(z_i, z_k)) -
-                log(sqrt((2 * M_PI * S_k).determinant()));
+          cout << "d_z " << safeMinusTheta(z_i, z_k)(1) << endl;
+          j_k = -0.5 * safeMinusTheta(z_i, z_k).transpose() * S_k.inverse() * (safeMinusTheta(z_i, z_k)) - log(sqrt((2 * M_PI * S_k).determinant()));
           // cout << j_k << endl;
-          if (j_k > j_max) {
+          if (j_k > j_max)
+          {
             j_max = j_k;
             k_max = k;
             z_j_max = z_k;
             H_j_max = H_k;
             S_j_max = S_k;
           }
-        } catch (const std::exception &e) {
+        }
+        catch (const std::exception &e)
+        {
           ROS_ERROR("%s", e.what());
           // std::cerr << e.what() << '\n';
         }
@@ -257,7 +286,8 @@ void Ekf::update() {
       // only update three time but now it might update wrong beacon pillar
       // for the 3 beacon pillars, take out the largest 3 j value and z, H, S
       // matrix
-      if (j_max > j_beacon_max[k_max]) {
+      if (j_max > j_beacon_max[k_max])
+      {
         j_beacon_max[k_max] = j_max;
         z_j_beacon_max[k_max] = z_j_max;
         z_i_beacon_max[k_max] = z_i;
@@ -267,18 +297,18 @@ void Ekf::update() {
         update_beacon_[k_max] = landmark_scan;
       }
     }
-    for (int i = 0; i < 3; i++) {
-      if (j_beacon_max[i] > p_mini_likelihood_update_) {
+    for (int i = 0; i < 3; i++)
+    {
+      if (j_beacon_max[i] > p_mini_likelihood_update_)
+      {
         // cout << "update, j = " << j_beacon_max[i] << endl;
         Eigen::Matrix3d K_i;
-        K_i = robotstate_bar_.sigma * H_j_beacon_max[i].transpose() *
-              S_j_beacon_max[i].inverse();
-        robotstate_bar_.mu +=
-            K_i * (safeMinusTheta(z_i_beacon_max[i], z_j_beacon_max[i]));
-        robotstate_bar_.sigma =
-            (Eigen::Matrix3d::Identity() - K_i * H_j_beacon_max[i]) *
-            robotstate_bar_.sigma;
-      } else {
+        K_i = robotstate_bar_.sigma * H_j_beacon_max[i].transpose() * S_j_beacon_max[i].inverse();
+        robotstate_bar_.mu += K_i * (safeMinusTheta(z_i_beacon_max[i], z_j_beacon_max[i]));
+        robotstate_bar_.sigma = (Eigen::Matrix3d::Identity() - K_i * H_j_beacon_max[i]) * robotstate_bar_.sigma;
+      }
+      else
+      {
         update_beacon_[i] = Eigen::Vector2d(-1, -1);
         // cout << "didn't update, j = " << j_beacon_max[i] << endl;
       }
@@ -290,31 +320,38 @@ void Ekf::update() {
   if_new_obstacles_ = false;
 }
 
-double Ekf::euclideanDistance(Eigen::Vector2d a, Eigen::Vector3d b) {
+double Ekf::euclideanDistance(Eigen::Vector2d a, Eigen::Vector3d b)
+{
   return sqrt(pow((b(0) - a(0)), 2) + pow((b(1) - a(1)), 2));
 }
 
-double Ekf::euclideanDistance(Eigen::Vector2d a, Eigen::Vector2d b) {
+double Ekf::euclideanDistance(Eigen::Vector2d a, Eigen::Vector2d b)
+{
   return sqrt(pow((b(0) - a(0)), 2) + pow((b(1) - a(1)), 2));
 }
 
-double Ekf::angleLimitChecking(double theta) {
-  if (theta > M_PI) {
+double Ekf::angleLimitChecking(double theta)
+{
+  while (theta > M_PI)
+  {
     theta -= M_PI * 2;
-  } else if (theta <= -M_PI) {
+  }
+  while (theta <= -M_PI)
+  {
     theta += M_PI * 2;
   }
   return theta;
 }
 
-Eigen::Vector3d Ekf::safeMinusTheta(Eigen::Vector3d a, Eigen::Vector3d b) {
-  Eigen::Vector3d a_minus_b = a - b;
-  a_minus_b(2) = angleLimitChecking(a_minus_b(2));
+Eigen::Vector3d Ekf::safeMinusTheta(Eigen::Vector3d a, Eigen::Vector3d b)
+{
+  Eigen::Vector3d a_minus_b = a     - b;
+  a_minus_b(1) = angleLimitChecking(a_minus_b(1));
   return a_minus_b;
 }
 
-Eigen::Vector3d Ekf::cartesianToPolar(Eigen::Vector2d point,
-                                      Eigen::Vector3d origin) {
+Eigen::Vector3d Ekf::cartesianToPolar(Eigen::Vector2d point, Eigen::Vector3d origin)
+{
   // transpose point from cartesian to polar with given origin
   double q_sqrt = euclideanDistance(point, origin);
   double q = pow(q_sqrt, 2);
@@ -326,8 +363,8 @@ Eigen::Vector3d Ekf::cartesianToPolar(Eigen::Vector2d point,
   return z;
 }
 
-std::tuple<Eigen::Vector3d, Eigen::Matrix3d>
-Ekf::cartesianToPolarWithH(Eigen::Vector2d point, Eigen::Vector3d origin) {
+std::tuple<Eigen::Vector3d, Eigen::Matrix3d> Ekf::cartesianToPolarWithH(Eigen::Vector2d point, Eigen::Vector3d origin)
+{
   // transpose point from cartesian to polar with given origin
   double q_sqrt = euclideanDistance(point, origin);
   double q = pow(q_sqrt, 2);
@@ -341,8 +378,8 @@ Ekf::cartesianToPolarWithH(Eigen::Vector2d point, Eigen::Vector3d origin) {
   return std::make_tuple(z, H);
 }
 
-Eigen::Vector2d Ekf::tfBasefpToMap(Eigen::Vector2d point,
-                                   Eigen::Vector3d robot_pose) {
+Eigen::Vector2d Ekf::tfBasefpToMap(Eigen::Vector2d point, Eigen::Vector3d robot_pose)
+{
   double s = sin(robot_pose(2));
   double c = cos(robot_pose(2));
   Eigen::Matrix2d rotation_mat;
@@ -352,7 +389,38 @@ Eigen::Vector2d Ekf::tfBasefpToMap(Eigen::Vector2d point,
   return point_map;
 }
 
-void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr &odom_msg) {
+void Ekf::setposeCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& pose_msg)
+{
+  double x = pose_msg->pose.pose.position.x;
+  double y = pose_msg->pose.pose.position.y;
+
+  tf2::Quaternion q;
+  tf2::fromMsg(pose_msg->pose.pose.orientation, q);
+  tf2::Matrix3x3 qt(q);
+  double _, yaw;
+  qt.getRPY(_, _, yaw);
+
+  robotstate_past_.mu(0) = x;
+  robotstate_past_.mu(1) = y;
+  robotstate_past_.mu(2) = yaw;
+
+  robotstate_past_.sigma(0, 0) = pose_msg->pose.covariance[0];  // x-x
+  robotstate_past_.sigma(0, 1) = pose_msg->pose.covariance[1];  // x-y
+  robotstate_past_.sigma(0, 2) = pose_msg->pose.covariance[5];  // x-theta
+  robotstate_past_.sigma(1, 0) = pose_msg->pose.covariance[6];  // y-x
+  robotstate_past_.sigma(1, 1) = pose_msg->pose.covariance[7];  // y-y
+  robotstate_past_.sigma(1, 2) = pose_msg->pose.covariance[11]; // y-theta
+  robotstate_past_.sigma(2, 0) = pose_msg->pose.covariance[30]; // theta-x
+  robotstate_past_.sigma(2, 1) = pose_msg->pose.covariance[31]; // theta-y
+  robotstate_past_.sigma(2, 2) = pose_msg->pose.covariance[35]; // theta-theta
+
+  cout << "set initial x at " << x << endl;
+  cout << "set initial y at " << y << endl;
+  cout << "set initial theta at " << yaw << endl;
+}
+
+void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr &odom_msg)
+{
   const ros::Time stamp = ros::Time::now() + ros::Duration(0.2);
   double v_x = odom_msg->twist.twist.linear.x;
   double v_y = odom_msg->twist.twist.linear.y;
@@ -366,7 +434,7 @@ void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr &odom_msg) {
   // predict_diff(v_x, w);
   // cout<<"imu_w = "<<imu_w<<endl;
   predict_omni(v_x, v_y, w);
-  update();
+  update_landmark();
 
   // clock_gettime(CLOCK_REALTIME, &tt2);
   // count_ += 1;
@@ -375,20 +443,21 @@ void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr &odom_msg) {
 
   publishEkfPose(stamp); // stamp = acturally when does tf been generated
   publishUpdateBeacon(stamp);
-  broadcastEkfTransform(
-      odom_msg); // stamp = odom.stamp so frequency = odom's frequency
+  broadcastEkfTransform(odom_msg); // stamp = odom.stamp so frequency = odom's frequency
 }
 
-void Ekf::imuCallback(const sensor_msgs::Imu::ConstPtr &imu_msg) {
+void Ekf::imuCallback(const sensor_msgs::Imu::ConstPtr &imu_msg)
+{
   imu_w = imu_msg->angular_velocity.z;
 }
 
-void Ekf::obstaclesCallback(
-    const obstacle_detector::Obstacles::ConstPtr &obstacle_msg) {
+void Ekf::obstaclesCallback(const obstacle_detector::Obstacles::ConstPtr &obstacle_msg)
+{
   if_new_obstacles_ = false;
   beacon_from_scan_.clear(); // drop out all element in list
   // cout << "obstacle to map frame is: " << endl;
-  for (int i = 0; i < obstacle_msg->circles.size(); i++) {
+  for (int i = 0; i < obstacle_msg->circles.size(); i++)
+  {        
     obstacle_detector::CircleObstacle circle = obstacle_msg->circles[i];
     Eigen::Vector2d xy(circle.center.x, circle.center.y);
     Eigen::Vector2d xy_map = tfBasefpToMap(xy, robotstate_.mu);
@@ -397,10 +466,12 @@ void Ekf::obstaclesCallback(
     //     continue;
     // }
     // filter out those obstacles position do not close the beacon pillar on map
-    for (auto const &i : beacon_in_map_) {
+    for (auto const &i : beacon_in_map_)
+    {
       double distance = euclideanDistance(xy_map, i);
-      if (distance < p_max_obstacle_distance_) { // alst time in real world
-                                                 // experience we take < 0.5
+      if (distance < p_max_obstacle_distance_)
+      { // alst time in real world
+        // experience we take < 0.5
         // cout << xy_map << endl;
         beacon_from_scan_.push_back(xy);
       }
@@ -411,7 +482,8 @@ void Ekf::obstaclesCallback(
   if_new_obstacles_ = true;
 }
 
-void Ekf::publishEkfPose(const ros::Time &stamp) {
+void Ekf::publishEkfPose(const ros::Time &stamp)
+{
   geometry_msgs::PoseWithCovarianceStamped ekf_pose;
   ekf_pose.header.stamp = stamp;
   ekf_pose.header.frame_id = "map";
@@ -435,7 +507,8 @@ void Ekf::publishEkfPose(const ros::Time &stamp) {
   ekf_pose_pub_.publish(ekf_pose);
 }
 
-void Ekf::broadcastEkfTransform(const nav_msgs::Odometry::ConstPtr &odom_msg) {
+void Ekf::broadcastEkfTransform(const nav_msgs::Odometry::ConstPtr &odom_msg)
+{
   tf2::Transform map_to_baseft(
       tf2::Quaternion(tf2::Vector3(0, 0, 1), robotstate_.mu(2)),
       tf2::Vector3(robotstate_.mu(0), robotstate_.mu(1), 0));
@@ -454,9 +527,11 @@ void Ekf::broadcastEkfTransform(const nav_msgs::Odometry::ConstPtr &odom_msg) {
   br_.sendTransform(transformStamped);
 }
 
-void Ekf::publishUpdateBeacon(const ros::Time &stamp) {
+void Ekf::publishUpdateBeacon(const ros::Time &stamp)
+{
   obstacle_detector::Obstacles update_obstacles;
-  for (Eigen::Vector2d o : update_beacon_) {
+  for (Eigen::Vector2d o : update_beacon_)
+  {
     if (o(0) == -1)
       continue;
     obstacle_detector::CircleObstacle circle;
@@ -473,13 +548,15 @@ void Ekf::publishUpdateBeacon(const ros::Time &stamp) {
   update_beacon_pub_.publish(update_obstacles);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
   ros::init(argc, argv, "ekf_localization");
   ros::NodeHandle nh;
   Ekf ekf(nh);
   ekf.initialize();
 
-  while (ros::ok()) {
+  while (ros::ok())
+  {
     ros::spin();
   }
 }
