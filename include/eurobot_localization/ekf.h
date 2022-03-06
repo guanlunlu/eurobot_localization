@@ -31,7 +31,7 @@ class Ekf{
         void predict_diff(double v, double w);
         void predict_omni(double v_x, double v_y, double w);
         void update_landmark();
-        void update_gps();
+        void update_gps(Eigen::Vector3d gps_pose, Eigen::Matrix3d gps_cov);
 
         // several util function
         double euclideanDistance(Eigen::Vector2d a, Eigen::Vector3d b);
@@ -48,6 +48,7 @@ class Ekf{
         void odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg);
         void imuCallback(const sensor_msgs::Imu::ConstPtr& imu_msg);
         void obstaclesCallback(const obstacle_detector::Obstacles::ConstPtr& obstacle_msg);
+        void gpsCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& pose_msg);
         void publishEkfPose(const ros::Time& stamp);
         void publishUpdateBeacon(const ros::Time& stamp);
         void broadcastEkfTransform(const nav_msgs::Odometry::ConstPtr& odom_msg);
@@ -115,6 +116,7 @@ class Ekf{
         ros::Subscriber odom_sub_;
         ros::Subscriber imu_sub_;
         ros::Subscriber raw_obstacles_sub_;
+        ros::Subscriber gps_sub_;
 
         // Publisher
         ros::Publisher ekf_pose_pub_;

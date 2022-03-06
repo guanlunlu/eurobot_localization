@@ -98,6 +98,7 @@ void Ekf::initialize()
   odom_sub_ = nh_.subscribe("odom", 50, &Ekf::odomCallback, this);
   imu_sub_ = nh_.subscribe("imu", 50, &Ekf::imuCallback, this);
   raw_obstacles_sub_ = nh_.subscribe("raw_obstacles", 10, &Ekf::obstaclesCallback, this);
+  gps_sub_ = nh_.subscribe("lidar_bonbonbon", 10, &Ekf::gpsCallback, this);
   ekf_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("ekf_pose", 10);
   update_beacon_pub_ = nh_.advertise<obstacle_detector::Obstacles>("update_beacon", 10);
 
@@ -320,6 +321,52 @@ void Ekf::update_landmark()
   if_new_obstacles_ = false;
 }
 
+void Ekf::update_gps(Eigen::Vector3d gps_pose, Eigen::Matrix3d gps_cov)
+{
+  Eigen::Vector3d cur_pose;
+  Eigen::Matrix3d cur_cov;
+  cur_pose = robotstate_past_.mu;
+  cur_cov = robotstate_past_.sigma;
+
+  Eigen::Vector3d z;
+  Eigen::Vector3d z_hat;
+  Eigen::Vector3d d_z;
+  
+  double z_r = sqrt(pow(gps_pose(0),2) + pow(gps_pose(1),2));
+  double z_hat_r = sqrt(pow(cur_pose(0),2) + pow(cur_pose(1),2));
+  double z_phi = - M_PI + atan2(gps_pose(1), gps_pose(0)) - gps_pose(2);
+  double z_hat_phi = - M_PI + atan2(cur_pose(1), cur_pose(0)) - cur_pose(2);
+  z_phi = angleLimitChecking(z_phi);
+  z_hat_phi = angleLimitChecking(z_hat_phi);
+
+  d_z << (z_r - z_hat_r),
+         (z_phi - z_hat_phi),
+          0;
+
+  Eigen::Matrix3d H;
+  Eigen::Matrix3d S;
+  Eigen::Matrix3d K;
+  Eigen::Vector3d mu;
+  Eigen::Vector3d sigma;
+
+  double dx = z_r * cos(z_hat_r);
+  double dy = z_r * sin(z_hat_r);
+  double q = pow(z_r, 2);
+  double q_sqrt = z_r;
+
+  H << -(dx / q_sqrt), -(dy / q_sqrt), 0.0,
+        dy / q, -dx / q, -1.0,
+        0.0, 0.0, 0.0;
+        
+  S = H * cur_cov * H.transpose() + Eigen::Matrix3d(gps_cov);
+  K = cur_cov * H.transpose() * S.inverse();
+  mu = cur_pose + K * d_z;
+  sigma = (Eigen::Matrix3d::Identity() - K*H) * cur_cov;
+
+  robotstate_past_.mu = mu;
+  robotstate_past_.sigma = sigma;
+}
+
 double Ekf::euclideanDistance(Eigen::Vector2d a, Eigen::Vector3d b)
 {
   return sqrt(pow((b(0) - a(0)), 2) + pow((b(1) - a(1)), 2));
@@ -435,6 +482,7 @@ void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr &odom_msg)
   // cout<<"imu_w = "<<imu_w<<endl;
   predict_omni(v_x, v_y, w);
   update_landmark();
+  // update_gps()
 
   // clock_gettime(CLOCK_REALTIME, &tt2);
   // count_ += 1;
