@@ -52,11 +52,7 @@ void Ekf::initialize()
 
   // for robot state
   mu_0_ << p_initial_x_, p_initial_y_, degToRad(p_initial_theta_deg_);
-  robotstate_past_.mu = mu_0_;
-  robotstate_past_.sigma << 0, 0, 0, 0, 0, 0, 0, 0, 0;
-  robotstate_bar_.mu << 0, 0, 0;
-  robotstate_bar_.sigma << 0, 0, 0, 0, 0, 0, 0, 0, 0;
-  robotstate_.mu << 0, 0, 0;
+  robotstate_.mu << mu_0_;
   robotstate_.sigma << 0, 0, 0, 0, 0, 0, 0, 0, 0;
 
   nh_.param<double>("/ekf/odom_freq", p_odom_freq_, 50.0);
@@ -110,7 +106,7 @@ void Ekf::initialize()
 
 void Ekf::predict_diff(double v, double w)
 {
-  double theta = robotstate_past_.mu(2);
+  double theta = robotstate_.mu(2);
   double s = sin(theta);
   double c = cos(theta);
   double s_dt = sin(theta + w * dt_);
@@ -126,9 +122,7 @@ void Ekf::predict_diff(double v, double w)
   {
     G << 1.0, 0.0, -v * s * dt_, 0.0, 1.0, c * v * dt_, 0.0, 0.0, 1.0;
     V << c * dt_, 0.0, s * dt_, 0.0, 0.0, 0.0;
-    robotstate_bar_.mu =
-        robotstate_past_.mu + Eigen::Vector3d{v * c * dt_, v * s * dt_, 0.0};
-    // cout << robotstate_bar_.mu << endl;
+    robotstate_.mu = robotstate_.mu + Eigen::Vector3d{v * c * dt_, v * s * dt_, 0.0};
   }
   else
   {
@@ -137,16 +131,13 @@ void Ekf::predict_diff(double v, double w)
     V << (-s + s_dt) / w, v * (s - s_dt) / pow(w, 2) + v * dt_ * (c_dt) / w,
         (c - c_dt) / w, -v * (c - c_dt) / pow(w, 2) + v * dt_ * (s_dt) / w, 0.0,
         dt_;
-    robotstate_bar_.mu =
-        robotstate_past_.mu +
-        Eigen::Vector3d{v * (-s + s_dt) / w, v * (c - c_dt) / w, w * dt_};
-    robotstate_bar_.mu(2) = angleLimitChecking(robotstate_bar_.mu(2));
+    robotstate_.mu = robotstate_.mu + Eigen::Vector3d{v * (-s + s_dt) / w, v * (c - c_dt) / w, w * dt_};
+    robotstate_.mu(2) = angleLimitChecking(robotstate_.mu(2));
   }
 
-  M << pow(p_a1_ * v, 2) + pow(p_a2_ * w, 2), 0.0, 0.0,
-      pow(p_a3_ * v, 2) + pow(p_a4_ * w, 2);
-  robotstate_bar_.sigma =
-      G * robotstate_past_.sigma * G.transpose() + V * M * V.transpose();
+  M << pow(p_a1_ * v, 2) + pow(p_a2_ * w, 2), 0.0,
+       0.0, pow(p_a3_ * v, 2) + pow(p_a4_ * w, 2);
+  robotstate_.sigma = G * robotstate_.sigma * G.transpose() + V * M * V.transpose();
 }
 
 void Ekf::predict_omni(double v_x, double v_y, double w)
@@ -155,7 +146,7 @@ void Ekf::predict_omni(double v_x, double v_y, double w)
   double d_x = v_x / p_odom_freq_;
   double d_y = v_y / p_odom_freq_;
   double d_theta = w / p_odom_freq_;
-  double theta = robotstate_past_.mu(2);
+  double theta = robotstate_.mu(2);
   double theta_ = theta + d_theta / 2;
   double s_theta = sin(theta);
   double c_theta = cos(theta);
@@ -175,8 +166,10 @@ void Ekf::predict_omni(double v_x, double v_y, double w)
   Eigen::Vector3d error_vec;
   Eigen::DiagonalMatrix<double, 3> cov_motion;
 
-  Eigen::Vector3d state_pre;
-  Eigen::Matrix3d cov_pre;
+  Eigen::Vector3d state_past;
+  Eigen::Matrix3d cov_past;
+  state_past = robotstate_.mu;
+  cov_past = robotstate_.sigma;
 
   // Jacobian matrix for Ekf linearization
   G << 1.0, 0.0, -d_x * s_theta - d_y * c_theta, 0.0, 1.0,
@@ -194,14 +187,13 @@ void Ekf::predict_omni(double v_x, double v_y, double w)
   cov_motion = Eigen::Vector3d{var_x, var_y, var_theta}.asDiagonal();
 
   // Mean of Prediction
-  x_pre = robotstate_past_.mu(0) + d_x * c__theta - d_y * s__theta;
-  y_pre = robotstate_past_.mu(1) + d_x * s__theta + d_y * c__theta;
-  theta_pre = robotstate_past_.mu(2) + d_theta;
-  robotstate_bar_.mu << x_pre, y_pre, theta_pre;
+  x_pre = state_past(0) + d_x * c__theta - d_y * s__theta;
+  y_pre = state_past(1) + d_x * s__theta + d_y * c__theta;
+  theta_pre = state_past(2) + d_theta;
+  robotstate_.mu << x_pre, y_pre, theta_pre;
 
   // Covariance of Prediction
-  robotstate_bar_.sigma = G * robotstate_past_.sigma * G.transpose() +
-                          W * cov_motion * W.transpose();
+  robotstate_.sigma = G * cov_past * G.transpose() + W * cov_motion * W.transpose();
 }
 
 void Ekf::update_landmark()
@@ -249,8 +241,8 @@ void Ekf::update_landmark()
         Eigen::Vector3d z_k;
         Eigen::Matrix3d H_k;
         Eigen::Matrix3d S_k;
-        std::tie(z_k, H_k) = cartesianToPolarWithH(landmark_k, robotstate_bar_.mu);
-        S_k = H_k * robotstate_bar_.sigma * H_k.transpose() + Eigen::Matrix3d(Q_);
+        std::tie(z_k, H_k) = cartesianToPolarWithH(landmark_k, robotstate_.mu);
+        S_k = H_k * robotstate_.sigma * H_k.transpose() + Eigen::Matrix3d(Q_);
         try
         {
           // original
@@ -305,9 +297,9 @@ void Ekf::update_landmark()
       {
         // cout << "update, j = " << j_beacon_max[i] << endl;
         Eigen::Matrix3d K_i;
-        K_i = robotstate_bar_.sigma * H_j_beacon_max[i].transpose() * S_j_beacon_max[i].inverse();
-        robotstate_bar_.mu += K_i * (safeMinusTheta(z_i_beacon_max[i], z_j_beacon_max[i]));
-        robotstate_bar_.sigma = (Eigen::Matrix3d::Identity() - K_i * H_j_beacon_max[i]) * robotstate_bar_.sigma;
+        K_i = robotstate_.sigma * H_j_beacon_max[i].transpose() * S_j_beacon_max[i].inverse();
+        robotstate_.mu += K_i * (safeMinusTheta(z_i_beacon_max[i], z_j_beacon_max[i]));
+        robotstate_.sigma = (Eigen::Matrix3d::Identity() - K_i * H_j_beacon_max[i]) * robotstate_.sigma;
       }
       else
       {
@@ -316,8 +308,6 @@ void Ekf::update_landmark()
       }
     }
   }
-  robotstate_ = robotstate_bar_;
-  robotstate_past_ = robotstate_;
   // finish once ekf, change the flag
   if_new_obstacles_ = false;
 }
@@ -328,8 +318,8 @@ void Ekf::update_gps(Eigen::Vector3d gps_pose, Eigen::Matrix3d gps_cov)
   {
     Eigen::Vector3d cur_pose;
     Eigen::Matrix3d cur_cov;
-    cur_pose = robotstate_bar_.mu;
-    cur_cov = robotstate_bar_.sigma;
+    cur_pose = robotstate_.mu;
+    cur_cov = robotstate_.sigma;
 
     Eigen::Vector3d z;
     Eigen::Vector3d z_hat;
@@ -378,12 +368,6 @@ void Ekf::update_gps(Eigen::Vector3d gps_pose, Eigen::Matrix3d gps_cov)
 
     robotstate_.mu = mu;
     robotstate_.sigma = sigma;
-    robotstate_past_ = robotstate_;
-  }
-  else
-  {
-    robotstate_ = robotstate_bar_;
-    robotstate_past_ = robotstate_;
   }
   if_gps = false;
 }
@@ -468,19 +452,19 @@ void Ekf::setposeCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstP
   double _, yaw;
   qt.getRPY(_, _, yaw);
 
-  robotstate_past_.mu(0) = x;
-  robotstate_past_.mu(1) = y;
-  robotstate_past_.mu(2) = yaw;
+  robotstate_.mu(0) = x;
+  robotstate_.mu(1) = y;
+  robotstate_.mu(2) = yaw;
 
-  robotstate_past_.sigma(0, 0) = pose_msg->pose.covariance[0];  // x-x
-  robotstate_past_.sigma(0, 1) = pose_msg->pose.covariance[1];  // x-y
-  robotstate_past_.sigma(0, 2) = pose_msg->pose.covariance[5];  // x-theta
-  robotstate_past_.sigma(1, 0) = pose_msg->pose.covariance[6];  // y-x
-  robotstate_past_.sigma(1, 1) = pose_msg->pose.covariance[7];  // y-y
-  robotstate_past_.sigma(1, 2) = pose_msg->pose.covariance[11]; // y-theta
-  robotstate_past_.sigma(2, 0) = pose_msg->pose.covariance[30]; // theta-x
-  robotstate_past_.sigma(2, 1) = pose_msg->pose.covariance[31]; // theta-y
-  robotstate_past_.sigma(2, 2) = pose_msg->pose.covariance[35]; // theta-theta
+  robotstate_.sigma(0, 0) = pose_msg->pose.covariance[0];  // x-x
+  robotstate_.sigma(0, 1) = pose_msg->pose.covariance[1];  // x-y
+  robotstate_.sigma(0, 2) = pose_msg->pose.covariance[5];  // x-theta
+  robotstate_.sigma(1, 0) = pose_msg->pose.covariance[6];  // y-x
+  robotstate_.sigma(1, 1) = pose_msg->pose.covariance[7];  // y-y
+  robotstate_.sigma(1, 2) = pose_msg->pose.covariance[11]; // y-theta
+  robotstate_.sigma(2, 0) = pose_msg->pose.covariance[30]; // theta-x
+  robotstate_.sigma(2, 1) = pose_msg->pose.covariance[31]; // theta-y
+  robotstate_.sigma(2, 2) = pose_msg->pose.covariance[35]; // theta-theta
 
   cout << "set initial x at " << x << endl;
   cout << "set initial y at " << y << endl;
@@ -500,10 +484,8 @@ void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr &odom_msg)
   // clock_gettime(CLOCK_REALTIME, &tt1);
 
   // predict_diff(v_x, w);
-  // cout<<"imu_w = "<<imu_w<<endl;
   predict_omni(v_x, v_y, w);
-  // update_landmark();
-  // cout << "robotstate_mu" << robotstate_past_.mu << endl;
+  update_landmark();
   update_gps(gps_mu, gps_sigma);
 
   // clock_gettime(CLOCK_REALTIME, &tt2);

@@ -8,6 +8,7 @@ Panels:
         - /Navigation1
         - /Navigation1/TF1/Frames1
         - /Localization1
+        - /Localization1/Obstacles1
         - /Obstacles1
       Splitter Ratio: 0.5
     Tree Height: 690
@@ -102,11 +103,11 @@ Visualization Manager:
               Value: true
             base_link:
               Value: true
-            landmark1:
+            beacon1:
               Value: true
-            landmark2:
+            beacon2:
               Value: true
-            landmark3:
+            beacon3:
               Value: true
             map:
               Value: true
@@ -120,11 +121,11 @@ Visualization Manager:
           Show Names: true
           Tree:
             map:
-              landmark1:
+              beacon1:
                 {}
-              landmark2:
+              beacon2:
                 {}
-              landmark3:
+              beacon3:
                 {}
               odom:
                 base_footprint:
@@ -245,7 +246,7 @@ Visualization Manager:
           Queue Size: 10
           Segments color: 170; 170; 0
           Segments thickness: 0.029999999329447746
-          Topic: /raw_obstacles
+          Topic: /obstacles_to_base
           Unreliable: false
           Value: true
         - Alpha: 1
@@ -311,7 +312,7 @@ Visualization Manager:
       Value: true
     - Circles color: 114; 159; 207
       Class: Obstacles
-      Enabled: true
+      Enabled: false
       Margin color: 252; 175; 62
       Name: Obstacles
       Opacity: 0.75
@@ -320,7 +321,7 @@ Visualization Manager:
       Segments thickness: 0.029999999329447746
       Topic: /update_beacon
       Unreliable: false
-      Value: true
+      Value: false
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

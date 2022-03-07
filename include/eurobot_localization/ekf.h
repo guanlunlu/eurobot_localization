@@ -71,8 +71,6 @@ class Ekf{
 
         // for robot state
         Eigen::Vector3d mu_0_;
-        RobotState robotstate_past_;
-        RobotState robotstate_bar_;
         RobotState robotstate_;
         double p_odom_freq_;
         double imu_w;
