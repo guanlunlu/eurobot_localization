@@ -96,6 +96,10 @@ class Ekf{
         double p_Q2_;
         double p_Q3_;
         Eigen::DiagonalMatrix<double, 3> Q_;
+        // gps measurement
+        bool if_gps;
+        Eigen::Vector3d gps_mu;
+        Eigen::Matrix3d gps_sigma;
 
         // set minimum likelihood value
         double p_mini_likelihood_;
