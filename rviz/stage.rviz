@@ -99,15 +99,13 @@ Visualization Manager:
             All Enabled: false
             base_footprint:
               Value: true
-            base_laser_link:
-              Value: true
-            base_link:
-              Value: true
             beacon1:
               Value: true
             beacon2:
               Value: true
             beacon3:
+              Value: true
+            laser_frame:
               Value: true
             map:
               Value: true
@@ -129,9 +127,8 @@ Visualization Manager:
                 {}
               odom:
                 base_footprint:
-                  base_link:
-                    base_laser_link:
-                      {}
+                  laser_frame:
+                    {}
           Update Interval: 0
           Value: true
         - Angle Tolerance: 0.0010000000474974513
@@ -222,7 +219,7 @@ Visualization Manager:
           Axes Radius: 0.10000000149011612
           Class: rviz/Pose
           Color: 173; 127; 168
-          Enabled: false
+          Enabled: true
           Head Length: 0.05000000074505806
           Head Radius: 0.10000000149011612
           Name: Pose
@@ -232,7 +229,7 @@ Visualization Manager:
           Shape: Arrow
           Topic: /nav_goal
           Unreliable: false
-          Value: false
+          Value: true
       Enabled: true
       Name: Navigation
     - Class: rviz/Group
@@ -312,7 +309,7 @@ Visualization Manager:
       Value: true
     - Circles color: 114; 159; 207
       Class: Obstacles
-      Enabled: false
+      Enabled: true
       Margin color: 252; 175; 62
       Name: Obstacles
       Opacity: 0.75
@@ -321,7 +318,7 @@ Visualization Manager:
       Segments thickness: 0.029999999329447746
       Topic: /update_beacon
       Unreliable: false
-      Value: false
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -349,7 +346,7 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Angle: 6.265005111694336
+      Angle: 3.1250040531158447
       Class: rviz/TopDownOrtho
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549

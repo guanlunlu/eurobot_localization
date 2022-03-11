@@ -47,8 +47,7 @@ void Ekf::initialize()
   beacon_in_map_ = {beacon_a, beacon_b, beacon_c};
 
   // for debug
-  update_beacon_ = {Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(0.0, 0.0),
-                    Eigen::Vector2d(0.0, 0.0)};
+  update_beacon_ = {Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(0.0, 0.0)};
 
   // for robot state
   mu_0_ << p_initial_x_, p_initial_y_, degToRad(p_initial_theta_deg_);
@@ -96,6 +95,7 @@ void Ekf::initialize()
   imu_sub_ = nh_.subscribe("imu", 50, &Ekf::imuCallback, this);
   raw_obstacles_sub_ = nh_.subscribe("obstacles_to_base", 10, &Ekf::obstaclesCallback, this);
   gps_sub_ = nh_.subscribe("lidar_bonbonbon", 10, &Ekf::gpsCallback, this);
+  beacon_sub_ = nh_.subscribe("beacon_bonbonbon", 10, &Ekf::gpsCallback, this);
   ekf_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("ekf_pose", 10);
   update_beacon_pub_ = nh_.advertise<obstacle_detector::Obstacles>("update_beacon", 10);
 
@@ -126,11 +126,13 @@ void Ekf::predict_diff(double v, double w)
   }
   else
   {
-    G << 1.0, 0.0, (v * (-c + c_dt)) / w, 0.0, 1.0, (v * (-s + s_dt)) / w, 0.0,
-        0.0, 1.0;
-    V << (-s + s_dt) / w, v * (s - s_dt) / pow(w, 2) + v * dt_ * (c_dt) / w,
-        (c - c_dt) / w, -v * (c - c_dt) / pow(w, 2) + v * dt_ * (s_dt) / w, 0.0,
-        dt_;
+    G << 1.0, 0.0, (v * (-c + c_dt)) / w,
+         0.0, 1.0, (v * (-s + s_dt)) / w,
+         0.0, 0.0, 1.0;
+
+    V << (-s + s_dt) / w, v * (s - s_dt) / pow(w, 2) + v * dt_ * (c_dt) / w, (c - c_dt) / w, 
+        -v * (c - c_dt) / pow(w, 2) + v * dt_ * (s_dt) / w, 0.0, dt_;
+        
     robotstate_.mu = robotstate_.mu + Eigen::Vector3d{v * (-s + s_dt) / w, v * (c - c_dt) / w, w * dt_};
     robotstate_.mu(2) = angleLimitChecking(robotstate_.mu(2));
   }
@@ -348,6 +350,7 @@ void Ekf::update_gps(Eigen::Vector3d gps_pose, Eigen::Matrix3d gps_cov)
 
     // double dx = z_r * cos(z_hat_r);
     // double dy = z_r * sin(z_hat_r);
+
     double dx = -gps_pose(0);
     double dy = -gps_pose(1);
     double q = pow(z_r, 2);
@@ -358,8 +361,8 @@ void Ekf::update_gps(Eigen::Vector3d gps_pose, Eigen::Matrix3d gps_cov)
     //       0.0, 0.0, 0.0;
 
     H << 1.0, 0.0, 0.0,
-          0.0, 1.0, 0.0,
-          0.0, 0.0, 1.0;
+         0.0, 1.0, 0.0,
+         0.0, 0.0, 1.0;
 
     S = H * cur_cov * H.transpose() + Eigen::Matrix3d(gps_cov);
     K = cur_cov * H.transpose() * S.inverse();
@@ -369,7 +372,7 @@ void Ekf::update_gps(Eigen::Vector3d gps_pose, Eigen::Matrix3d gps_cov)
     robotstate_.mu = mu;
     robotstate_.sigma = sigma;
   }
-  if_gps = false;
+    if_gps = false;
 }
 
 double Ekf::euclideanDistance(Eigen::Vector2d a, Eigen::Vector3d b)
@@ -471,7 +474,7 @@ void Ekf::setposeCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstP
   cout << "set initial theta at " << yaw << endl;
 }
 
-void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr &odom_msg)
+void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
 {
   const ros::Time stamp = ros::Time::now() + ros::Duration(0.2);
   double v_x = odom_msg->twist.twist.linear.x;
@@ -487,6 +490,7 @@ void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr &odom_msg)
   predict_omni(v_x, v_y, w);
   update_landmark();
   update_gps(gps_mu, gps_sigma);
+  update_gps(beacon_mu, beacon_sigma);
 
   // clock_gettime(CLOCK_REALTIME, &tt2);
   // count_ += 1;
@@ -510,19 +514,40 @@ void Ekf::gpsCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& 
   gps_mu(1) = pose_msg->pose.pose.position.y;
   gps_mu(2) = yaw;
 
-  // gps_sigma(0, 0) = pose_msg->pose.covariance[0];  // x-x
-  gps_sigma(0, 0) = 0.01;  // x-x
+  gps_sigma(0, 0) = pose_msg->pose.covariance[0];  // x-x
   gps_sigma(0, 1) = pose_msg->pose.covariance[1];  // x-y
   gps_sigma(0, 2) = pose_msg->pose.covariance[5];  // x-theta
   gps_sigma(1, 0) = pose_msg->pose.covariance[6];  // y-x
-  // gps_sigma(1, 1) = pose_msg->pose.covariance[7];  // y-y
-  gps_sigma(1, 1) = 0.01;  // y-y
+  gps_sigma(1, 1) = pose_msg->pose.covariance[7];  // y-y
   gps_sigma(1, 2) = pose_msg->pose.covariance[11]; // y-theta
   gps_sigma(2, 0) = pose_msg->pose.covariance[30]; // theta-x
   gps_sigma(2, 1) = pose_msg->pose.covariance[31]; // theta-y
-  // gps_sigma(2, 2) = pose_msg->pose.covariance[35]; // theta-theta
-  gps_sigma(2,2) = 0.01;
+  gps_sigma(2, 2) = pose_msg->pose.covariance[35]; // theta-theta
   if_gps = true;
+}
+
+void Ekf::beaconCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& pose_msg)
+{
+  tf2::Quaternion q;
+  tf2::fromMsg(pose_msg->pose.pose.orientation, q);
+  tf2::Matrix3x3 qt(q);
+  double _, yaw;
+  qt.getRPY(_, _, yaw);
+
+  beacon_mu(0) = pose_msg->pose.pose.position.x;
+  beacon_mu(1) = pose_msg->pose.pose.position.y;
+  beacon_mu(2) = yaw;
+
+  beacon_sigma(0, 0) = pose_msg->pose.covariance[0];  // x-x
+  beacon_sigma(0, 1) = pose_msg->pose.covariance[1];  // x-y
+  beacon_sigma(0, 2) = pose_msg->pose.covariance[5];  // x-theta
+  beacon_sigma(1, 0) = pose_msg->pose.covariance[6];  // y-x
+  beacon_sigma(1, 1) = pose_msg->pose.covariance[7];  // y-y
+  beacon_sigma(1, 2) = pose_msg->pose.covariance[11]; // y-theta
+  beacon_sigma(2, 0) = pose_msg->pose.covariance[30]; // theta-x
+  beacon_sigma(2, 1) = pose_msg->pose.covariance[31]; // theta-y
+  beacon_sigma(2, 2) = pose_msg->pose.covariance[35]; // theta-theta
+  if_beacon = true;
 }
 
 void Ekf::imuCallback(const sensor_msgs::Imu::ConstPtr &imu_msg)

@@ -49,6 +49,7 @@ class Ekf{
         void imuCallback(const sensor_msgs::Imu::ConstPtr& imu_msg);
         void obstaclesCallback(const obstacle_detector::Obstacles::ConstPtr& obstacle_msg);
         void gpsCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& pose_msg);
+        void beaconCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& pose_msg);
         void publishEkfPose(const ros::Time& stamp);
         void publishUpdateBeacon(const ros::Time& stamp);
         void broadcastEkfTransform(const nav_msgs::Odometry::ConstPtr& odom_msg);
@@ -98,6 +99,9 @@ class Ekf{
         bool if_gps;
         Eigen::Vector3d gps_mu;
         Eigen::Matrix3d gps_sigma;
+        bool if_beacon;
+        Eigen::Vector3d beacon_mu;
+        Eigen::Matrix3d beacon_sigma;
 
         // set minimum likelihood value
         double p_mini_likelihood_;
@@ -119,6 +123,7 @@ class Ekf{
         ros::Subscriber imu_sub_;
         ros::Subscriber raw_obstacles_sub_;
         ros::Subscriber gps_sub_;
+        ros::Subscriber beacon_sub_;
 
         // Publisher
         ros::Publisher ekf_pose_pub_;
