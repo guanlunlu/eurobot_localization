@@ -23,7 +23,6 @@
  */
 
 #include "ekf.h"
-#include "nav_msgs/Odometry.h"
 using namespace std;
 
 void Ekf::initialize()
@@ -59,17 +58,6 @@ void Ekf::initialize()
     dt_ = 1.0 / p_odom_freq_;
 
     // ekf parameter
-    // prediction
-    // differential drive
-    nh_.param<double>("/ekf/predict_cov_a1", p_a1_, 1.5);
-    nh_.param<double>("/ekf/predict_cov_a2", p_a2_, 2.5);
-    nh_.param<double>("/ekf/predict_cov_a3", p_a3_, 1.5);
-    nh_.param<double>("/ekf/predict_cov_a4", p_a4_, 2.5);
-    // omnidirectional drive
-    nh_.param<double>("/ekf/predict_const_x", p_const_x, 2.0);
-    nh_.param<double>("/ekf/predict_const_y", p_const_y, 2.0);
-    nh_.param<double>("/ekf/predict_const_theta", p_const_theta, 0.3);
-    P_omni_model_ = Eigen::Vector3d{ p_const_x, p_const_y, p_const_theta }.asDiagonal();
     // measurement
     nh_.param<double>("/ekf/update_cov_1", p_Q1_, 0.01);
     nh_.param<double>("/ekf/update_cov_2", p_Q2_, 0.01);
@@ -87,18 +75,12 @@ void Ekf::initialize()
 
     // for beacon piller detection
     if_new_obstacles_ = false;
-    if_gps = false;
-    beacon_from_scan_ = {};
 
     // for ros
     setpose_sub_ = nh_.subscribe("initialpose", 50, &Ekf::setposeCallback, this);
-    odom_sub_ = nh_.subscribe("odom", 50, &Ekf::odomCallback, this);
-    imu_sub_ = nh_.subscribe("imu", 50, &Ekf::imuCallback, this);
+    odom_sub_ = nh_.subscribe("global_filter", 50, &Ekf::odomCallback, this);
     raw_obstacles_sub_ = nh_.subscribe("obstacles_to_base", 10, &Ekf::obstaclesCallback, this);
-    gps_sub_ = nh_.subscribe("lidar_bonbonbon", 10, &Ekf::gpsCallback, this);
-    beacon_sub_ = nh_.subscribe("beacon_bonbonbon", 10, &Ekf::gpsCallback, this);
     ekf_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("ekf_pose", 10);
-    global_filter_pub_ = nh_.advertise<nav_msgs::Odometry>("global_filter", 10);
     update_beacon_pub_ = nh_.advertise<obstacle_detector::Obstacles>("update_beacon", 10);
 
     // for time calculate
@@ -106,103 +88,12 @@ void Ekf::initialize()
     duration_ = 0.0;
 }
 
-void Ekf::predict_diff(double v, double w)
-{
-    double theta = robotstate_.mu(2);
-    double s = sin(theta);
-    double c = cos(theta);
-    double s_dt = sin(theta + w * dt_);
-    double c_dt = cos(theta + w * dt_);
-    // cout << "sin= " << s << ",cos= " << c << ", theta= " << theta << endl;
-
-    // ekf predict step
-    Eigen::Matrix3d G;
-    Eigen::Matrix<double, 3, 2> V;
-    Eigen::Matrix2d M;
-
-    if ((w < 0.00001) && (w > -0.00001))
-    {
-        G << 1.0, 0.0, -v * s * dt_, 0.0, 1.0, c * v * dt_, 0.0, 0.0, 1.0;
-        V << c * dt_, 0.0, s * dt_, 0.0, 0.0, 0.0;
-        robotstate_.mu = robotstate_.mu + Eigen::Vector3d{ v * c * dt_, v * s * dt_, 0.0 };
-    }
-    else
-    {
-        G << 1.0, 0.0, (v * (-c + c_dt)) / w, 0.0, 1.0, (v * (-s + s_dt)) / w, 0.0, 0.0, 1.0;
-
-        V << (-s + s_dt) / w, v * (s - s_dt) / pow(w, 2) + v * dt_ * (c_dt) / w, (c - c_dt) / w,
-            -v * (c - c_dt) / pow(w, 2) + v * dt_ * (s_dt) / w, 0.0, dt_;
-
-        robotstate_.mu = robotstate_.mu + Eigen::Vector3d{ v * (-s + s_dt) / w, v * (c - c_dt) / w, w * dt_ };
-        robotstate_.mu(2) = angleLimitChecking(robotstate_.mu(2));
-    }
-
-    M << pow(p_a1_ * v, 2) + pow(p_a2_ * w, 2), 0.0, 0.0, pow(p_a3_ * v, 2) + pow(p_a4_ * w, 2);
-    robotstate_.sigma = G * robotstate_.sigma * G.transpose() + V * M * V.transpose();
-}
-
-void Ekf::predict_omni(double v_x, double v_y, double w)
-{
-    // TODO ekf predict function for omni
-    double d_x = v_x / p_odom_freq_;
-    double d_y = v_y / p_odom_freq_;
-    double d_theta = w / p_odom_freq_;
-    double theta = robotstate_.mu(2);
-    double theta_ = theta + d_theta / 2;
-    double s_theta = sin(theta);
-    double c_theta = cos(theta);
-    double s__theta = sin(theta_);
-    double c__theta = cos(theta_);
-    double var_x = 0;
-    double var_y = 0;
-    double var_theta = 0;
-
-    double x_pre = 0;
-    double y_pre = 0;
-    double theta_pre = 0;
-
-    Eigen::Matrix3d G;
-    Eigen::Matrix3d W;
-    Eigen::Vector3d stdev_vec;
-    Eigen::Vector3d error_vec;
-    Eigen::DiagonalMatrix<double, 3> cov_motion;
-
-    Eigen::Vector3d state_past;
-    Eigen::Matrix3d cov_past;
-    state_past = robotstate_.mu;
-    cov_past = robotstate_.sigma;
-
-    // Jacobian matrix for Ekf linearization
-    G << 1.0, 0.0, -d_x * s_theta - d_y * c_theta, 0.0, 1.0, d_x * c_theta - d_y * s_theta, 0.0, 0.0, 1.0;
-
-    W << c__theta, -s__theta, -d_x * s__theta / 2 - d_y * c__theta / 2, s__theta, c__theta,
-        d_x * c__theta / 2 - d_y * s__theta / 2, 0.0, 0.0, 1.0;
-
-    // calculate model covariance
-    error_vec << d_x, d_y, d_theta;
-    stdev_vec = P_omni_model_ * error_vec;
-    var_x = stdev_vec(0) * stdev_vec(0);
-    var_y = stdev_vec(1) * stdev_vec(1);
-    var_theta = stdev_vec(2) * stdev_vec(2);
-    cov_motion = Eigen::Vector3d{ var_x, var_y, var_theta }.asDiagonal();
-
-    // Mean of Prediction
-    x_pre = state_past(0) + d_x * c__theta - d_y * s__theta;
-    y_pre = state_past(1) + d_x * s__theta + d_y * c__theta;
-    theta_pre = state_past(2) + d_theta;
-    robotstate_.mu << x_pre, y_pre, theta_pre;
-
-    // Covariance of Prediction
-    robotstate_.sigma = G * cov_past * G.transpose() + W * cov_motion * W.transpose();
-    // cout << "predict sigma " << robotstate_.sigma << endl;
-}
-
 void Ekf::update_landmark()
 {
     // ekf update step:
     if (if_new_obstacles_)
     {
-        // ROS_INFO("update landmark");
+        ROS_INFO("update landmark");
         // cout << "beacon: " << endl;
         // vector of the max j_max for each beacon
         vector<double> j_beacon_max = { p_mini_likelihood_, p_mini_likelihood_, p_mini_likelihood_ };
@@ -312,65 +203,6 @@ void Ekf::update_landmark()
     if_new_obstacles_ = false;
 }
 
-void Ekf::update_gps(Eigen::Vector3d gps_pose, Eigen::Matrix3d gps_cov)
-{
-    if (if_gps == true)
-    {
-        // ROS_INFO("update gps");
-        // ROS_INFO("gps pose = %f %f %f", gps_pose(0), gps_pose(1), gps_pose(2));
-        Eigen::Vector3d cur_pose;
-        Eigen::Matrix3d cur_cov;
-        cur_pose = robotstate_.mu;
-        cur_cov = robotstate_.sigma;
-
-        Eigen::Vector3d z;
-        Eigen::Vector3d z_hat;
-        Eigen::Vector3d d_z;
-
-        double z_r = sqrt(pow(gps_pose(0), 2) + pow(gps_pose(1), 2));
-        double z_hat_r = sqrt(pow(cur_pose(0), 2) + pow(cur_pose(1), 2));
-        double z_phi = -M_PI + atan2(gps_pose(1), gps_pose(0)) - gps_pose(2);
-        double z_hat_phi = -M_PI + atan2(cur_pose(1), cur_pose(0)) - cur_pose(2);
-        z_phi = angleLimitChecking(z_phi);
-        z_hat_phi = angleLimitChecking(z_hat_phi);
-
-        // d_z << (z_r - z_hat_r),
-        //        (z_phi - z_hat_phi),
-        //         0;
-
-        d_z << gps_pose(0) - cur_pose(0), gps_pose(1) - cur_pose(1), angleLimitChecking(gps_pose(2) - cur_pose(2));
-
-        Eigen::Matrix3d H;
-        Eigen::Matrix3d S;
-        Eigen::Matrix3d K;
-        Eigen::Vector3d mu;
-        Eigen::Matrix3d sigma;
-
-        // double dx = z_r * cos(z_hat_r);
-        // double dy = z_r * sin(z_hat_r);
-
-        double dx = -gps_pose(0);
-        double dy = -gps_pose(1);
-        double q = pow(z_r, 2);
-        double q_sqrt = z_r;
-
-        // H << -(dx / q_sqrt), -(dy / q_sqrt), 0.0,
-        //       dy / q, -dx / q, -1.0,
-        //       0.0, 0.0, 0.0;
-
-        H << 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0;
-
-        S = H * cur_cov * H.transpose() + Eigen::Matrix3d(gps_cov);
-        K = cur_cov * H.transpose() * S.inverse();
-        mu = cur_pose + K * d_z;
-        sigma = (Eigen::Matrix3d::Identity() - K * H) * cur_cov;
-
-        robotstate_.mu = mu;
-        robotstate_.sigma = sigma;
-    }
-    if_gps = false;
-}
-
 double Ekf::euclideanDistance(Eigen::Vector2d a, Eigen::Vector3d b)
 {
     return sqrt(pow((b(0) - a(0)), 2) + pow((b(1) - a(1)), 2));
@@ -429,16 +261,6 @@ std::tuple<Eigen::Vector3d, Eigen::Matrix3d> Ekf::cartesianToPolarWithH(Eigen::V
     return std::make_tuple(z, H);
 }
 
-Eigen::Vector2d Ekf::tfBasefpToMap(Eigen::Vector2d point, Eigen::Vector3d robot_pose)
-{
-    double s = sin(robot_pose(2));
-    double c = cos(robot_pose(2));
-    Eigen::Matrix2d rotation_mat;
-    rotation_mat << c, -s, s, c;
-    Eigen::Vector2d point_map = rotation_mat * point + Eigen::Vector2d{ robot_pose(0), robot_pose(1) };
-    return point_map;
-}
-
 void Ekf::setposeCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& pose_msg)
 {
     double x = pose_msg->pose.pose.position.x;
@@ -469,12 +291,28 @@ void Ekf::setposeCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstP
     cout << "set initial theta at " << yaw << endl;
 }
 
-void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
+void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr& pose_msg)
 {
     const ros::Time stamp = ros::Time::now() + ros::Duration(0.2);
-    double v_x = odom_msg->twist.twist.linear.x;
-    double v_y = odom_msg->twist.twist.linear.y;
-    double w = odom_msg->twist.twist.angular.z;
+    double x = pose_msg->pose.pose.position.x;
+    double y = pose_msg->pose.pose.position.y;
+
+    tf2::Quaternion q;
+    tf2::fromMsg(pose_msg->pose.pose.orientation, q);
+    tf2::Matrix3x3 qt(q);
+    double _, yaw;
+    qt.getRPY(_, _, yaw);
+
+    robotstate_.mu << x, y, yaw;
+    robotstate_.sigma(0, 0) = pose_msg->pose.covariance[0];   // x-x
+    robotstate_.sigma(0, 1) = pose_msg->pose.covariance[1];   // x-y
+    robotstate_.sigma(0, 2) = pose_msg->pose.covariance[5];   // x-theta
+    robotstate_.sigma(1, 0) = pose_msg->pose.covariance[6];   // y-x
+    robotstate_.sigma(1, 1) = pose_msg->pose.covariance[7];   // y-y
+    robotstate_.sigma(1, 2) = pose_msg->pose.covariance[11];  // y-theta
+    robotstate_.sigma(2, 0) = pose_msg->pose.covariance[30];  // theta-x
+    robotstate_.sigma(2, 1) = pose_msg->pose.covariance[31];  // theta-y
+    robotstate_.sigma(2, 2) = pose_msg->pose.covariance[35];  // theta-theta
 
     // cout << "v: " << v << "w: " << w << endl;
     // for calculate time cost
@@ -482,78 +320,15 @@ void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
     // clock_gettime(CLOCK_REALTIME, &tt1);
 
     // predict_diff(v_x, w);
-    predict_omni(v_x, v_y, w);
-    // ROS_INFO("Predict_omni = %f %f %f", robotstate_.mu(0), robotstate_.mu(1), robotstate_.mu(2));
     update_landmark();
+    publishEkfPose(stamp);  // stamp = acturally when does tf been generated
     // ROS_INFO("update_landmark = %f %f %f", robotstate_.mu(0), robotstate_.mu(1), robotstate_.mu(2));
-    update_gps(gps_mu, gps_sigma);
-    // ROS_INFO("gps_update = %f %f %f", robotstate_.mu(0), robotstate_.mu(1), robotstate_.mu(2));
-    update_gps(beacon_mu, beacon_sigma);
-    // ROS_INFO("---------");
+    // update_gps(gps_mu, gps_sigma);
 
     // clock_gettime(CLOCK_REALTIME, &tt2);
     // count_ += 1;
     // duration_ += (tt2.tv_nsec-tt1.tv_nsec)*1e-9;
     // cout << "average time cost is " << duration_/count_ << "s" << endl;
-
-    publishEkfPose(stamp);  // stamp = acturally when does tf been generated
-    publishGlobalFilter(stamp);
-    publishUpdateBeacon(stamp);
-    broadcastEkfTransform(odom_msg);  // stamp = odom.stamp so frequency = odom's frequency
-}
-
-void Ekf::gpsCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& pose_msg)
-{
-    // ROS_INFO("gpsCallback");
-    tf2::Quaternion q;
-    tf2::fromMsg(pose_msg->pose.pose.orientation, q);
-    tf2::Matrix3x3 qt(q);
-    double _, yaw;
-    qt.getRPY(_, _, yaw);
-
-    gps_mu(0) = pose_msg->pose.pose.position.x;
-    gps_mu(1) = pose_msg->pose.pose.position.y;
-    gps_mu(2) = yaw;
-
-    gps_sigma(0, 0) = pose_msg->pose.covariance[0];   // x-x
-    gps_sigma(0, 1) = pose_msg->pose.covariance[1];   // x-y
-    gps_sigma(0, 2) = pose_msg->pose.covariance[5];   // x-theta
-    gps_sigma(1, 0) = pose_msg->pose.covariance[6];   // y-x
-    gps_sigma(1, 1) = pose_msg->pose.covariance[7];   // y-y
-    gps_sigma(1, 2) = pose_msg->pose.covariance[11];  // y-theta
-    gps_sigma(2, 0) = pose_msg->pose.covariance[30];  // theta-x
-    gps_sigma(2, 1) = pose_msg->pose.covariance[31];  // theta-y
-    gps_sigma(2, 2) = pose_msg->pose.covariance[35];  // theta-theta
-    if_gps = true;
-}
-
-void Ekf::beaconCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& pose_msg)
-{
-    tf2::Quaternion q;
-    tf2::fromMsg(pose_msg->pose.pose.orientation, q);
-    tf2::Matrix3x3 qt(q);
-    double _, yaw;
-    qt.getRPY(_, _, yaw);
-
-    beacon_mu(0) = pose_msg->pose.pose.position.x;
-    beacon_mu(1) = pose_msg->pose.pose.position.y;
-    beacon_mu(2) = yaw;
-
-    beacon_sigma(0, 0) = pose_msg->pose.covariance[0];   // x-x
-    beacon_sigma(0, 1) = pose_msg->pose.covariance[1];   // x-y
-    beacon_sigma(0, 2) = pose_msg->pose.covariance[5];   // x-theta
-    beacon_sigma(1, 0) = pose_msg->pose.covariance[6];   // y-x
-    beacon_sigma(1, 1) = pose_msg->pose.covariance[7];   // y-y
-    beacon_sigma(1, 2) = pose_msg->pose.covariance[11];  // y-theta
-    beacon_sigma(2, 0) = pose_msg->pose.covariance[30];  // theta-x
-    beacon_sigma(2, 1) = pose_msg->pose.covariance[31];  // theta-y
-    beacon_sigma(2, 2) = pose_msg->pose.covariance[35];  // theta-theta
-    if_beacon = true;
-}
-
-void Ekf::imuCallback(const sensor_msgs::Imu::ConstPtr& imu_msg)
-{
-    imu_w = imu_msg->angular_velocity.z;
 }
 
 void Ekf::obstaclesCallback(const obstacle_detector::Obstacles::ConstPtr& obstacle_msg)
@@ -587,6 +362,16 @@ void Ekf::obstaclesCallback(const obstacle_detector::Obstacles::ConstPtr& obstac
     if_new_obstacles_ = true;
 }
 
+Eigen::Vector2d Ekf::tfBasefpToMap(Eigen::Vector2d point, Eigen::Vector3d robot_pose)
+{
+    double s = sin(robot_pose(2));
+    double c = cos(robot_pose(2));
+    Eigen::Matrix2d rotation_mat;
+    rotation_mat << c, -s, s, c;
+    Eigen::Vector2d point_map = rotation_mat * point + Eigen::Vector2d{ robot_pose(0), robot_pose(1) };
+    return point_map;
+}
+
 void Ekf::publishEkfPose(const ros::Time& stamp)
 {
     geometry_msgs::PoseWithCovarianceStamped ekf_pose;
@@ -612,48 +397,6 @@ void Ekf::publishEkfPose(const ros::Time& stamp)
     ekf_pose_pub_.publish(ekf_pose);
 }
 
-void Ekf::publishGlobalFilter(const ros::Time& stamp)
-{
-    nav_msgs::Odometry ekf_pose;
-    ekf_pose.header.stamp = stamp;
-    ekf_pose.header.frame_id = "map";
-    ekf_pose.pose.pose.position.x = robotstate_.mu(0);
-    ekf_pose.pose.pose.position.y = robotstate_.mu(1);
-    tf2::Quaternion q;
-    q.setRPY(0, 0, robotstate_.mu(2));
-    ekf_pose.pose.pose.orientation.x = q.x();
-    ekf_pose.pose.pose.orientation.y = q.y();
-    ekf_pose.pose.pose.orientation.z = q.z();
-    ekf_pose.pose.pose.orientation.w = q.w();
-    ekf_pose.pose.covariance[0] = robotstate_.sigma(0, 0);   // x-x
-    ekf_pose.pose.covariance[1] = robotstate_.sigma(0, 1);   // x-y
-    ekf_pose.pose.covariance[5] = robotstate_.sigma(0, 2);   // x-theta
-    ekf_pose.pose.covariance[6] = robotstate_.sigma(1, 0);   // y-x
-    ekf_pose.pose.covariance[7] = robotstate_.sigma(1, 1);   // y-y
-    ekf_pose.pose.covariance[11] = robotstate_.sigma(1, 2);  // y-theta
-    ekf_pose.pose.covariance[30] = robotstate_.sigma(2, 0);  // theta-x
-    ekf_pose.pose.covariance[31] = robotstate_.sigma(2, 1);  // theta-y
-    ekf_pose.pose.covariance[35] = robotstate_.sigma(2, 2);  // theta-theta
-    global_filter_pub_.publish(ekf_pose);
-}
-
-void Ekf::broadcastEkfTransform(const nav_msgs::Odometry::ConstPtr& odom_msg)
-{
-    tf2::Transform map_to_baseft(tf2::Quaternion(tf2::Vector3(0, 0, 1), robotstate_.mu(2)),
-                                 tf2::Vector3(robotstate_.mu(0), robotstate_.mu(1), 0));
-    tf2::Transform odom_to_baseft(
-        tf2::Quaternion(0, 0, odom_msg->pose.pose.orientation.z, odom_msg->pose.pose.orientation.w),
-        tf2::Vector3(odom_msg->pose.pose.position.x, odom_msg->pose.pose.position.y, 0));
-    tf2::Transform map_to_odom = map_to_baseft * odom_to_baseft.inverse();
-
-    geometry_msgs::TransformStamped transformStamped;
-    transformStamped.header.stamp = odom_msg->header.stamp;
-    transformStamped.header.frame_id = "map";
-    transformStamped.child_frame_id = p_robot_name_ + "/odom";
-    transformStamped.transform = tf2::toMsg(map_to_odom);
-    br_.sendTransform(transformStamped);
-}
-
 void Ekf::publishUpdateBeacon(const ros::Time& stamp)
 {
     obstacle_detector::Obstacles update_obstacles;
@@ -677,7 +420,7 @@ void Ekf::publishUpdateBeacon(const ros::Time& stamp)
 
 int main(int argc, char** argv)
 {
-    ros::init(argc, argv, "ekf_localization");
+    ros::init(argc, argv, "landmark_update");
     ros::NodeHandle nh;
     Ekf ekf(nh);
     ekf.initialize();
