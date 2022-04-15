@@ -93,12 +93,12 @@ void Ekf::initialize()
     // for ros
     setpose_sub_ = nh_.subscribe("initialpose", 50, &Ekf::setposeCallback, this);
     odom_sub_ = nh_.subscribe("odom", 50, &Ekf::odomCallback, this);
-    imu_sub_ = nh_.subscribe("imu", 50, &Ekf::imuCallback, this);
+    imu_sub_ = nh_.subscribe("/mpu6050_imu", 50, &Ekf::imuCallback, this);
     raw_obstacles_sub_ = nh_.subscribe("obstacles_to_base", 10, &Ekf::obstaclesCallback, this);
     gps_sub_ = nh_.subscribe("lidar_bonbonbon", 10, &Ekf::gpsCallback, this);
     beacon_sub_ = nh_.subscribe("beacon_bonbonbon", 10, &Ekf::gpsCallback, this);
     ekf_pose_pub_ = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("ekf_pose", 10);
-    global_filter_pub_ = nh_.advertise<nav_msgs::Odometry>("global_filter", 10);
+    global_filter_pub_ = nh_.advertise<nav_msgs::Odometry>("ekf_pose_in_odom", 10);
     update_beacon_pub_ = nh_.advertise<obstacle_detector::Obstacles>("update_beacon", 10);
 
     // for time calculate
@@ -482,7 +482,8 @@ void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
     // clock_gettime(CLOCK_REALTIME, &tt1);
 
     // predict_diff(v_x, w);
-    predict_omni(v_x, v_y, w);
+    // predict_omni(v_x, v_y, w);
+    predict_omni(v_x, v_y, imu_w);
     // ROS_INFO("Predict_omni = %f %f %f", robotstate_.mu(0), robotstate_.mu(1), robotstate_.mu(2));
     update_landmark();
     // ROS_INFO("update_landmark = %f %f %f", robotstate_.mu(0), robotstate_.mu(1), robotstate_.mu(2));

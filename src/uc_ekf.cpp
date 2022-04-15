@@ -59,9 +59,9 @@ void Ekf::initialize()
 
     // ekf parameter
     // measurement
-    nh_.param<double>("/ekf/update_cov_1", p_Q1_, 0.01);
-    nh_.param<double>("/ekf/update_cov_2", p_Q2_, 0.01);
-    nh_.param<double>("/ekf/update_cov_3", p_Q3_, 0.02);
+    nh_.param<double>("/ekf/update_cov_1", p_Q1_, 0.05);
+    nh_.param<double>("/ekf/update_cov_2", p_Q2_, 0.05);
+    nh_.param<double>("/ekf/update_cov_3", p_Q3_, 0.05);
     Q_ = Eigen::Vector3d{ p_Q1_, p_Q2_, p_Q3_ }.asDiagonal();
     // use log(j_k)
     nh_.param<double>("/ekf/mini_likelihood", p_mini_likelihood_, -10000.0);
@@ -313,6 +313,10 @@ void Ekf::odomCallback(const nav_msgs::Odometry::ConstPtr& pose_msg)
     robotstate_.sigma(2, 0) = pose_msg->pose.covariance[30];  // theta-x
     robotstate_.sigma(2, 1) = pose_msg->pose.covariance[31];  // theta-y
     robotstate_.sigma(2, 2) = pose_msg->pose.covariance[35];  // theta-theta
+
+    robotstate_.sigma(0, 0) = 0.5;   // x-x
+    robotstate_.sigma(1, 1) = 0.5;   // y-y
+    robotstate_.sigma(2, 2) = 0.5;  // theta-theta
 
     // cout << "v: " << v << "w: " << w << endl;
     // for calculate time cost

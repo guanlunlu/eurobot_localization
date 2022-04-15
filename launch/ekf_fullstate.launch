@@ -1,0 +1,8 @@
+<launch>
+    <node name="ekf" pkg="eurobot_localization" type="ekf" >
+        <rosparam file="$(find eurobot_localization)/config/ekf_dit.yaml"/>
+	<remap from="odom" to="global_filter"/>
+    </node>
+
+    <include file="$(find eurobot)/launch/localization/localization_fullstate.launch"/>
+</launch>
